@@ -176,64 +176,18 @@ def get_excel_col_name(col_index):
     return result
 
 # ---------------------------------------------------------
-# ฟังก์ชัน PDF อัปเดตใหม่ล่าสุด: ดึงคำเป๊ะๆ 100% ไม่แต่งเติม & แยกหมวดหมู่จากโครงสร้างจริง
+# ฟังก์ชัน PDF อัปเดตใหม่: นับเฉพาะจำนวนจุดและตำแหน่งหน้า (ไม่จัดหมวดหมู่แล้ว)
 # ---------------------------------------------------------
 def count_digital_highlights(pdf_bytes):
     if not PDF_SUPPORT:
-        return -1,[], {}, "ไม่พบไลบรารี PyMuPDF กรุณาติดตั้ง pip install pymupdf"
+        return -1,[], "ไม่พบไลบรารี PyMuPDF กรุณาติดตั้ง pip install pymupdf"
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         total_highlights = 0
-        page_details =[]
-        
-        # 1. จัดทำ Mapping หัวข้อหลักเพื่อความแม่นยำ 100%
-        target_categories = {
-            "คุณสมบัติของผู้ยื่นข้อเสนอ": "(๑) คุณสมบัติผู้ยื่นข้อเสนอ",
-            "วงเงินงบประมาณ": "(๓) วงเงินงบประมาณ",
-            "งวดงานและการจ่ายเงิน": "(๒) ค่าจ้างและการจ่ายเงิน/การส่งมอบ",
-            "อัตราค่าปรับ": "(๕) อัตราค่าปรับ",
-            "เงื่อนไขการรับประกัน": "(๔) การรับประกันความชำรุดบกพร่อง"
-        }
-        
-        # สแกนเอกสารเพื่อสร้างหมุดหมาย (Markers) ว่าหัวข้อไหนเริ่มต้นที่หน้าไหนตำแหน่งไหน
-        markers =[]
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            blocks = page.get_text("dict").get("blocks",[])
-            for b in blocks:
-                if b.get("type") == 0: # บล็อกข้อความ
-                    for l in b["lines"]:
-                        line_text = "".join([s["text"] for s in l["spans"]]).strip()
-                        line_text_clean = line_text.replace(" ", "")
-                        
-                        # ดักจับบรรทัดที่ขึ้นต้นด้วยตัวเลขและจุด เช่น "๔.", "๑๐." เพื่อระบุ Section
-                        if re.match(r'^[0-9๑-๙]+\.', line_text_clean):
-                            matched = False
-                            for kw, cat_name in target_categories.items():
-                                if kw in line_text_clean:
-                                    markers.append((page_num, l["bbox"][1], cat_name))
-                                    matched = True
-                                    break
-                            # ถ้าเป็นหัวข้อตัวเลขอื่นที่ไม่ใช่เป้าหมาย (เช่น "๕. การยื่นข้อเสนอ") ให้รีเซ็ตเป็น "อื่นๆ"
-                            if not matched:
-                                markers.append((page_num, l["bbox"][1], "(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"))
-                                
-        markers.sort(key=lambda x: (x[0], x[1]))
-
-        # 2. ค้นหาและจัดหมวดหมู่ไฮไลต์
-        categories_keys =[
-            "(๑) คุณสมบัติผู้ยื่นข้อเสนอ",
-            "(๒) ค่าจ้างและการจ่ายเงิน/การส่งมอบ",
-            "(๓) วงเงินงบประมาณ",
-            "(๔) การรับประกันความชำรุดบกพร่อง",
-            "(๕) อัตราค่าปรับ",
-            "(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"
-        ]
-        categorized_results = {cat:[] for cat in categories_keys}
+        page_details = []
         
         for page_num in range(len(doc)):
             page = doc[page_num]
-            words = page.get_text("words") # ดึงข้อมูล "คำ" ทั้งหมดในหน้า (เพื่อป้องกันคำงอก)
             page_hl_count = 0
             
             for annot in page.annots():
@@ -241,49 +195,13 @@ def count_digital_highlights(pdf_bytes):
                     page_hl_count += 1
                     total_highlights += 1
                     
-                    # --- กำหนดหมวดหมู่โดยอิงจาก Section ล่าสุด ---
-                    current_cat = "(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"
-                    for m_page, m_y0, m_cat in markers:
-                        # ถ้าย่อหน้าหัวข้อนั้นอยู่ก่อนหน้า หรืออยู่ด้านบนของไฮไลต์ ให้จดจำไว้
-                        if m_page < page_num or (m_page == page_num and m_y0 <= annot.rect.y0 + 10):
-                            current_cat = m_cat
-                        else:
-                            break
-                            
-                    # --- สกัดข้อความที่โดนปาดสีแบบ "คำต่อคำ" เป๊ะๆ เท่านั้น ---
-                    hl_text_words =[]
-                    quads = annot.vertices
-                    if quads:
-                        hl_rects = [fitz.Quad(quads[i:i+4]).rect for i in range(0, len(quads), 4)]
-                        for w in words:
-                            w_rect = fitz.Rect(w[:4])
-                            w_text = w[4]
-                            
-                            for qr in hl_rects:
-                                intersect = w_rect.intersect(qr)
-                                # ดึงเฉพาะคำที่ซ้อนทับกับเขตไฮไลต์เกิน 40% (เพื่อตัดคำแวดล้อมที่ติดมากับความกว้างของ Box)
-                                if not intersect.is_empty and (intersect.get_area() / w_rect.get_area() >= 0.4):
-                                    hl_text_words.append(w_text)
-                                    break
-                                    
-                    hl_text = " ".join(hl_text_words).strip()
-                    hl_text = re.sub(r'\s+', ' ', hl_text) # ลบช่องว่างส่วนเกิน
-                    
-                    if not hl_text:
-                        hl_text = "[ไม่สามารถสกัดข้อความได้ หรือเป็นไฮไลต์พื้นที่ว่าง]"
-                        
-                    categorized_results[current_cat].append({
-                        "page": page_num + 1,
-                        "text": hl_text
-                    })
-
             if page_hl_count > 0:
                 page_details.append({"page": page_num + 1, "count": page_hl_count})
                 
         doc.close()
-        return total_highlights, page_details, categorized_results, None
+        return total_highlights, page_details, None
     except Exception as e:
-        return -1,[], {}, str(e)
+        return -1,[], str(e)
 
 def generate_diff_html(cleaned_original, cleaned_compare):
     matcher = difflib.SequenceMatcher(None, cleaned_original, cleaned_compare)
@@ -434,40 +352,34 @@ with tab3:
                 st.markdown(html_table, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# TAB 4: ไฮไลท์ใน PDF (อัปเดตแยกหัวข้อแม่นยำ + ตัดคำเป๊ะ 100%)
+# TAB 4: ไฮไลท์ใน PDF (แค่บอกว่ามีกี่จุด หน้าไหนบ้าง)
 # ---------------------------------------------------------
 with tab4:
-    st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF ตามหัวข้อ TOR")
-    st.info("💡 ระบบจะจัดหมวดหมู่อัตโนมัติตามโครงสร้างของเอกสาร และดึงเฉพาะข้อความที่ถูกไฮไลต์ (ไม่แต่งเติมคำข้างเคียง)")
+    st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF")
+    st.info("💡 ระบบจะนับจำนวนไฮไลต์ทั้งหมดและสรุปรายละเอียดตำแหน่งหน้าที่พบ")
     
     if not PDF_SUPPORT:
         st.error("⚠️ ไม่พบไลบรารี PyMuPDF กรุณาติดตั้งผ่าน Terminal ด้วยคำสั่ง: `pip install pymupdf`")
     else:
         uploaded_file = st.file_uploader("📂 เลือกไฟล์ PDF:", type=['pdf'])
         if uploaded_file is not None:
-            if st.button("📑 เริ่มวิเคราะห์และแยกหมวดหมู่ไฮไลต์", type="primary"):
-                with st.spinner("⏳ กำลังสกัดข้อความจากไฮไลต์..."):
+            if st.button("📑 เริ่มนับจุดไฮไลต์", type="primary"):
+                with st.spinner("⏳ กำลังตรวจสอบเอกสาร..."):
                     pdf_bytes = uploaded_file.read()
-                    count, details, cat_results, error_msg = count_digital_highlights(pdf_bytes)
+                    count, details, error_msg = count_digital_highlights(pdf_bytes)
                     
                     if error_msg: 
                         st.error(f"❌ เกิดข้อผิดพลาด: {error_msg}")
                     else:
                         st.divider()
                         if count == 0: 
-                            st.info("ไม่พบไฮไลต์ดิจิตอลในไฟล์นี้")
+                            st.info("ไม่พบจุดไฮไลต์ดิจิตอลในไฟล์นี้เลย")
                         else:
                             st.success(f"📊 พบการไฮไลต์ทั้งหมด: **{count}** จุด")
 
-                            st.markdown("#### 📑 สรุปข้อความที่ถูกไฮไลต์ (แยกตามหมวดหมู่):")
-                            
-                            for cat_name, items in cat_results.items():
-                                with st.expander(f"📌 {cat_name} (พบ {len(items)} จุด)", expanded=(len(items) > 0)):
-                                    if len(items) == 0:
-                                        st.write("*- ไม่พบข้อความไฮไลต์ที่ตรงกับหัวข้อนี้ -*")
-                                    else:
-                                        for idx, item in enumerate(items, 1):
-                                            st.markdown(f"**{idx}. หน้า {item['page']}:** <span style='background-color: yellow; color: black; padding: 2px 6px; border-radius: 4px;'>{item['text']}</span>", unsafe_allow_html=True)
+                            st.markdown("#### 📑 รายละเอียดการค้นพบ:")
+                            for item in details:
+                                st.markdown(f"- **หน้าที่ {item['page']}** : พบ {item['count']} จุด")
 
 # ---------------------------------------------------------
 # TAB 1: ตรวจสอบ JSON Schema
@@ -502,7 +414,7 @@ with tab1:
                 all_keys = sorted(list(set(schema1.keys()).union(set(schema2.keys()))))
                 
                 # --- Helper Functions สำหรับตรวจสอบความยืดหยุ่น (Flexible Match) ---
-                SCHEMA_KEYWORDS =["string", "number", "integer", "boolean", "object", "array", "null", "any"]
+                SCHEMA_KEYWORDS = ["string", "number", "integer", "boolean", "object", "array", "null", "any"]
 
                 def is_schema_list_val(v):
                     return isinstance(v, list) and len(v) > 0 and all(isinstance(x, str) and x.lower() in SCHEMA_KEYWORDS for x in v)
