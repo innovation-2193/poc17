@@ -14,7 +14,7 @@ except ImportError:
 # ตั้งค่าหน้าเว็บ (Web Page Configuration)
 # ==========================================
 st.set_page_config(
-    page_title="Text, Table & PDF Analyzer",
+    page_title="โปรแกรมสำหรับวัดผลคะแนนการ POC",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="collapsed"
