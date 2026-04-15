@@ -176,7 +176,7 @@ def get_excel_col_name(col_index):
     return result
 
 # ---------------------------------------------------------
-# ฟังก์ชัน PDF อัปเดตใหม่: สกัดคำและแยก 5 หมวดหมู่
+# ฟังก์ชัน PDF อัปเดตใหม่: เพิ่มความแม่นยำด้วยการอ่านบริบท
 # ---------------------------------------------------------
 def count_digital_highlights(pdf_bytes):
     if not PDF_SUPPORT:
@@ -186,13 +186,13 @@ def count_digital_highlights(pdf_bytes):
         total_highlights = 0
         page_details =[]
         
-        # คีย์เวิร์ดสำหรับจัดหมวดหมู่
+        # คีย์เวิร์ดสำหรับจัดหมวดหมู่ (ใช้ตรวจจับจากประโยครอบๆ ไฮไลต์)
         categories = {
-            "(๑) คุณสมบัติผู้ยื่นข้อเสนอ":["คุณสมบัติ", "ผู้ยื่นข้อเสนอ", "ผลงาน", "นิติบุคคล", "หนังสือรับรอง", "ผู้เสนอราคา", "ร่วมค้า"],
-            "(๒) ค่าจ้างและการจ่ายเงิน/การส่งมอบ":["ค่าจ้าง", "จ่ายเงิน", "ส่งมอบ", "งวด", "ชำระเงิน", "วันทำการ", "ลงนาม", "วันนับถัดจาก"],
-            "(๓) วงเงินงบประมาณ":["งบประมาณ", "วงเงิน", "บาท", "ราคากลาง", "ล้านบาท"],
-            "(๔) การรับประกันความชำรุดบกพร่อง":["รับประกัน", "ความชำรุดบกพร่อง", "ซ่อมแซม", "บำรุงรักษา", "แก้ปัญหา"],
-            "(๕) อัตราค่าปรับ":["อัตราค่าปรับ", "ค่าปรับ", "ปรับ", "ร้อยละ", "ตายตัว"]
+            "(๑) คุณสมบัติผู้ยื่นข้อเสนอ":["คุณสมบัติของผู้ยื่นข้อเสนอ", "ผลงานที่เกี่ยวข้องกัน", "ผลงาน", "ประสบการณ์", "ผู้ยื่นข้อเสนอจะต้องมี"],
+            "(๒) ค่าจ้างและการจ่ายเงิน/การส่งมอบ":["งวดงานและการจ่ายเงิน", "งวดที่", "ส่งมอบพัสดุ", "ส่งมอบ"],
+            "(๓) วงเงินงบประมาณ":["วงเงินงบประมาณ", "งบประมาณโครงการ"],
+            "(๔) การรับประกันความชำรุดบกพร่อง":["เงื่อนไขการรับประกัน", "รับประกันคุณภาพ", "รับประกันประสิทธิภาพ", "รับประกันฮาร์ดแวร์", "รับประกันซอฟต์แวร์"],
+            "(๕) อัตราค่าปรับ":["อัตราค่าปรับ", "ค่าปรับ", "ปรับเป็นรายวัน"]
         }
         
         # เตรียม Dictionary เก็บผลลัพธ์แยกตามหัวข้อ
@@ -208,8 +208,9 @@ def count_digital_highlights(pdf_bytes):
                     page_hl_count += 1
                     total_highlights += 1
                     
-                    # สกัดข้อความที่อยู่ภายใต้จุดไฮไลต์ (Extract Text)
+                    # 1. ดึงข้อความ "เฉพาะส่วนที่ปาดไฮไลต์" ตรงๆ
                     quads = annot.vertices
+                    rect = annot.rect
                     hl_text = ""
                     if quads:
                         for i in range(0, len(quads), 4):
@@ -218,16 +219,22 @@ def count_digital_highlights(pdf_bytes):
                     
                     hl_text = re.sub(r'\s+', ' ', hl_text).strip()
                     if not hl_text:
-                        hl_text = "[ไม่สามารถสกัดข้อความได้ หรือเป็นการไฮไลต์พื้นที่ว่าง]"
+                        hl_text = "[ไม่สามารถสกัดข้อความได้]"
                         
-                    # คัดกรองเข้า 5 หมวดหมู่
+                    # 2. ดึงข้อความ "บริบทรอบๆ (Context)" เพื่อหาหมวดหมู่ที่แม่นยำ
+                    # ขยายพื้นที่ค้นหาขึ้น-ลง เพื่ออ่านหัวข้อหรือประโยครอบๆ 
+                    context_rect = fitz.Rect(0, max(0, rect.y0 - 150), page.rect.width, min(page.rect.height, rect.y1 + 150))
+                    context_text = page.get_textbox(context_rect)
+                    context_text = re.sub(r'\s+', ' ', context_text).strip()
+                        
+                    # 3. นำบริบท (Context) มาเปรียบเทียบหาหมวดหมู่
                     matched_category = "(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"
                     for cat, keywords in categories.items():
-                        if any(kw in hl_text for kw in keywords):
+                        if any(kw in context_text for kw in keywords):
                             matched_category = cat
-                            break # เจอหมวดหมู่แล้วให้หยุด
+                            break # เจอหมวดหมู่แล้วให้หยุดค้นหา
                             
-                    # บันทึกข้อมูลลงในหมวดหมู่นั้นๆ
+                    # 4. บันทึกข้อมูล (เก็บเฉพาะคำที่ถูกไฮไลต์จริงๆ เพื่อนำไปแสดงผล)
                     categorized_results[matched_category].append({
                         "page": page_num + 1,
                         "text": hl_text
@@ -390,11 +397,11 @@ with tab3:
                 st.markdown(html_table, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# TAB 4: ไฮไลท์ใน PDF (อัปเดตแยกหัวข้อ)
+# TAB 4: ไฮไลท์ใน PDF (อัปเดตแยกหัวข้อแม่นยำ)
 # ---------------------------------------------------------
 with tab4:
     st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF ตามหัวข้อ TOR")
-    st.info("💡 ระบบจะสกัดข้อความที่ถูกไฮไลต์ และนำมาจัดหมวดหมู่อัตโนมัติตาม Keyword ของทั้ง 5 หัวข้อหลัก")
+    st.info("💡 ระบบจะอ่านบริบทรอบๆ ข้อความที่ถูกไฮไลต์ เพื่อจับคู่หัวข้ออย่างแม่นยำ (แต่จะดึงแสดงผลเฉพาะข้อความเป๊ะๆ ที่โดนปาดสีเหลืองเท่านั้น)")
     
     if not PDF_SUPPORT:
         st.error("⚠️ ไม่พบไลบรารี PyMuPDF กรุณาติดตั้งผ่าน Terminal ด้วยคำสั่ง: `pip install pymupdf`")
@@ -428,7 +435,7 @@ with tab4:
                                             st.markdown(f"**{idx}. หน้า {item['page']}:** <span style='background-color: yellow; color: black; padding: 2px 6px; border-radius: 4px;'>{item['text']}</span>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# TAB 1: ตรวจสอบ JSON Schema (ปรับปรุงใหม่ล่าสุด)
+# TAB 1: ตรวจสอบ JSON Schema
 # ---------------------------------------------------------
 with tab1:
     st.markdown("### ⚙️ เปรียบเทียบโครงสร้าง JSON Schema")
@@ -460,34 +467,28 @@ with tab1:
                 all_keys = sorted(list(set(schema1.keys()).union(set(schema2.keys()))))
                 
                 # --- Helper Functions สำหรับตรวจสอบความยืดหยุ่น (Flexible Match) ---
-                # คำที่ใช้บอก Schema DataType ในกรณีกรอก "string", "number" เข้ามาแทนที่จะใส่เป็น Value ตรงๆ
-                SCHEMA_KEYWORDS =["string", "number", "integer", "boolean", "object", "array", "null", "any"]
+                SCHEMA_KEYWORDS = ["string", "number", "integer", "boolean", "object", "array", "null", "any"]
 
-                # กรอง all_keys เพื่อเอา keys ที่ลงท้ายด้วย [0] ออก หากมันมาจาก Schema List เช่น ["string", "null"]
                 def is_schema_list_val(v):
                     return isinstance(v, list) and len(v) > 0 and all(isinstance(x, str) and x.lower() in SCHEMA_KEYWORDS for x in v)
 
                 keys_to_remove = set()
                 for k in all_keys:
-                    #[แก้ไขล่าสุด 1] กรอง "$schema" และ "title" ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
-                    if k in["$schema", "title"] or k.endswith(".$schema"):
+                    if k in ["$schema", "title"] or k.endswith(".$schema"):
                         keys_to_remove.add(k)
                         continue
                         
-                    #[แก้ไขล่าสุด: กรองคำว่า required และ array ของ required ทุกรูปแบบ เช่น required, required[0] ออก]
                     parts = k.split('.')
                     if any(p == "required" or p.startswith("required[") for p in parts):
                         keys_to_remove.add(k)
                         continue
                         
-                    #[แก้ไขล่าสุด 2] กรองประเภท dict (object) ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
                     t1, _ = schema1.get(k, (None, None))
                     t2, _ = schema2.get(k, (None, None))
                     if t1 == "dict" or t2 == "dict":
                         keys_to_remove.add(k)
                         continue
                         
-                    # กรอง[0] ของ List Schema ออก
                     if k.endswith("[0]"):
                         parent_k = k[:-3]
                         if parent_k:
@@ -499,7 +500,6 @@ with tab1:
                 
                 all_keys =[k for k in all_keys if k not in keys_to_remove]
                 
-                # นับจำนวน Key ต้นฉบับจากเฉพาะ Key ที่ผ่านการคัดกรองแล้ว (ไม่นำพวกที่ถูกตัดทิ้งมาหารคะแนนรวม)
                 base_total_keys = len([k for k in schema1.keys() if k not in keys_to_remove])
                 
                 key_exist_count = 0  
@@ -524,9 +524,9 @@ with tab1:
 
                 def is_allowed_file_schema(val):
                     if val is None: return True
-                    if isinstance(val, str) and val.lower() in["null", "string", ""]: return True
+                    if isinstance(val, str) and val.lower() in ["null", "string", ""]: return True
                     if isinstance(val, list):
-                        lower_list =[str(x).lower() for x in val]
+                        lower_list = [str(x).lower() for x in val]
                         if all(x in["string", "null"] for x in lower_list): return True
                     return False
                 
@@ -536,7 +536,6 @@ with tab1:
                     in_s1 = k in schema1
                     in_s2 = k in schema2
                     
-                    # Unpack Type และ Value ออกมา
                     t1, v1 = schema1.get(k, (None, None))
                     t2, v2 = schema2.get(k, (None, None))
                     
@@ -569,7 +568,7 @@ with tab1:
                                     types_match = True
                                 elif s1 == {"string", "null"} and s2 in[{"string"}, {"null"}]:
                                     types_match = True
-                                elif s2 == {"string", "null"} and s1 in[{"string"}, {"null"}]:
+                                elif s2 == {"string", "null"} and s1 in [{"string"}, {"null"}]:
                                     types_match = True
                                 else:
                                     types_match = False
@@ -581,7 +580,6 @@ with tab1:
                             status = "✅ สมบูรณ์"
                             css_class = "td-match"
                         else:
-                            # --- ตรวจสอบความยืดหยุ่น (Flexible Check) ---
                             is_flex = False
                             
                             if is_special_file_docs(k) and is_allowed_file_schema(v1) and is_allowed_file_schema(v2):
@@ -621,7 +619,6 @@ with tab1:
                     
                     table_rows.append((k, display_t1, display_t2, status, css_class))
                 
-                # คำนวณเปอร์เซ็นต์
                 key_exist_pct = (key_exist_count / base_total_keys * 100) if base_total_keys > 0 else 0.0
                 type_match_pct = (type_match_count / base_total_keys * 100) if base_total_keys > 0 else 0.0
 
@@ -653,9 +650,6 @@ with tab1:
                 if extra_keys_count > 0:
                     st.warning(f"⚠️ **ข้อสังเกต:** พบข้อมูล Key ที่ **เกินเข้ามา** ในช่องเปรียบเทียบจำนวน **{extra_keys_count} คีย์** (ระบบจะไม่นำส่วนนี้ไปหักคะแนน เพราะอิงจากต้นฉบับ แต่จะแสดงเป็นสีเขียวในตารางด้านล่างครับ)")
 
-                # ==========================================
-                # คำอธิบายผลลัพธ์ (Legend)
-                # ==========================================
                 st.markdown("<br>### 🔍 ตารางแจกแจงรายละเอียดการตรวจสอบ", unsafe_allow_html=True)
                 st.markdown("""
                 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6; margin-bottom: 20px; color: #000;">
@@ -681,7 +675,6 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # สร้าง HTML ตาราง
                 html_json = "<div class='result-table-container'><table class='result-table'>"
                 html_json += "<thead><tr>"
                 html_json += "<th style='width: 50px; text-align: center;'>#</th>"
