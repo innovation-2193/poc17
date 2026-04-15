@@ -175,26 +175,71 @@ def get_excel_col_name(col_index):
         col_index = col_index // 26 - 1
     return result
 
+# ---------------------------------------------------------
+# ฟังก์ชัน PDF อัปเดตใหม่: สกัดคำและแยก 5 หมวดหมู่
+# ---------------------------------------------------------
 def count_digital_highlights(pdf_bytes):
     if not PDF_SUPPORT:
-        return -1,[], "ไม่พบไลบรารี PyMuPDF กรุณาติดตั้ง pip install pymupdf"
+        return -1,[], {}, "ไม่พบไลบรารี PyMuPDF กรุณาติดตั้ง pip install pymupdf"
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         total_highlights = 0
-        page_details =[] 
+        page_details =[]
+        
+        # คีย์เวิร์ดสำหรับจัดหมวดหมู่
+        categories = {
+            "(๑) คุณสมบัติผู้ยื่นข้อเสนอ":["คุณสมบัติ", "ผู้ยื่นข้อเสนอ", "ผลงาน", "นิติบุคคล", "หนังสือรับรอง", "ผู้เสนอราคา", "ร่วมค้า"],
+            "(๒) ค่าจ้างและการจ่ายเงิน/การส่งมอบ":["ค่าจ้าง", "จ่ายเงิน", "ส่งมอบ", "งวด", "ชำระเงิน", "วันทำการ", "ลงนาม", "วันนับถัดจาก"],
+            "(๓) วงเงินงบประมาณ":["งบประมาณ", "วงเงิน", "บาท", "ราคากลาง", "ล้านบาท"],
+            "(๔) การรับประกันความชำรุดบกพร่อง":["รับประกัน", "ความชำรุดบกพร่อง", "ซ่อมแซม", "บำรุงรักษา", "แก้ปัญหา"],
+            "(๕) อัตราค่าปรับ":["อัตราค่าปรับ", "ค่าปรับ", "ปรับ", "ร้อยละ", "ตายตัว"]
+        }
+        
+        # เตรียม Dictionary เก็บผลลัพธ์แยกตามหัวข้อ
+        categorized_results = {cat: [] for cat in categories.keys()}
+        categorized_results["(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"] =[]
+
         for page_num in range(len(doc)):
             page = doc[page_num]
             page_hl_count = 0
+            
             for annot in page.annots():
                 if annot.type[1].lower() == 'highlight':
                     page_hl_count += 1
                     total_highlights += 1
+                    
+                    # สกัดข้อความที่อยู่ภายใต้จุดไฮไลต์ (Extract Text)
+                    quads = annot.vertices
+                    hl_text = ""
+                    if quads:
+                        for i in range(0, len(quads), 4):
+                            quad = fitz.Quad(quads[i:i+4])
+                            hl_text += page.get_textbox(quad.rect) + " "
+                    
+                    hl_text = re.sub(r'\s+', ' ', hl_text).strip()
+                    if not hl_text:
+                        hl_text = "[ไม่สามารถสกัดข้อความได้ หรือเป็นการไฮไลต์พื้นที่ว่าง]"
+                        
+                    # คัดกรองเข้า 5 หมวดหมู่
+                    matched_category = "(๖) ข้อมูลอื่นๆ ที่ถูกไฮไลต์"
+                    for cat, keywords in categories.items():
+                        if any(kw in hl_text for kw in keywords):
+                            matched_category = cat
+                            break # เจอหมวดหมู่แล้วให้หยุด
+                            
+                    # บันทึกข้อมูลลงในหมวดหมู่นั้นๆ
+                    categorized_results[matched_category].append({
+                        "page": page_num + 1,
+                        "text": hl_text
+                    })
+
             if page_hl_count > 0:
                 page_details.append({"page": page_num + 1, "count": page_hl_count})
+                
         doc.close()
-        return total_highlights, page_details, None
+        return total_highlights, page_details, categorized_results, None
     except Exception as e:
-        return -1,[], str(e)
+        return -1,[], {}, str(e)
 
 def generate_diff_html(cleaned_original, cleaned_compare):
     matcher = difflib.SequenceMatcher(None, cleaned_original, cleaned_compare)
@@ -345,27 +390,42 @@ with tab3:
                 st.markdown(html_table, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
-# TAB 4: ไฮไลท์ใน PDF
+# TAB 4: ไฮไลท์ใน PDF (อัปเดตแยกหัวข้อ)
 # ---------------------------------------------------------
 with tab4:
-    st.markdown("### 📁 ตรวจสอบและนับไฮไลท์ดิจิตอลในไฟล์ PDF")
+    st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF ตามหัวข้อ TOR")
+    st.info("💡 ระบบจะสกัดข้อความที่ถูกไฮไลต์ และนำมาจัดหมวดหมู่อัตโนมัติตาม Keyword ของทั้ง 5 หัวข้อหลัก")
+    
     if not PDF_SUPPORT:
         st.error("⚠️ ไม่พบไลบรารี PyMuPDF กรุณาติดตั้งผ่าน Terminal ด้วยคำสั่ง: `pip install pymupdf`")
     else:
-        uploaded_file = st.file_uploader("📂 เลือกไฟล์ PDF (ระบบจะนับเฉพาะจุดไฮไลท์แถบสีดิจิตอล):", type=['pdf'])
+        uploaded_file = st.file_uploader("📂 เลือกไฟล์ PDF:", type=['pdf'])
         if uploaded_file is not None:
-            if st.button("📑 เริ่มนับไฮไลท์ดิจิตอล", type="primary"):
-                with st.spinner("⏳ กำลังวิเคราะห์ไฟล์ PDF..."):
+            if st.button("📑 เริ่มวิเคราะห์และแยกหมวดหมู่ไฮไลต์", type="primary"):
+                with st.spinner("⏳ กำลังสกัดข้อความจากไฮไลต์..."):
                     pdf_bytes = uploaded_file.read()
-                    count, details, error_msg = count_digital_highlights(pdf_bytes)
-                    if error_msg: st.error(f"❌ เกิดข้อผิดพลาด: {error_msg}")
+                    count, details, cat_results, error_msg = count_digital_highlights(pdf_bytes)
+                    
+                    if error_msg: 
+                        st.error(f"❌ เกิดข้อผิดพลาด: {error_msg}")
                     else:
                         st.divider()
-                        if count == 0: st.info("ไม่พบไฮไลท์ดิจิตอลในไฟล์นี้")
+                        if count == 0: 
+                            st.info("ไม่พบไฮไลต์ดิจิตอลในไฟล์นี้")
                         else:
-                            st.success(f"📊 พบการไฮไลท์แถบสีดิจิตอลทั้งหมด: **{count}** จุด")
-                            st.markdown("#### 📄 รายละเอียดหน้าที่มีไฮไลท์:")
-                            for item in details: st.markdown(f"- **หน้าที่ {item['page']}** : พบ {item['count']} จุด")
+                            st.success(f"📊 พบการไฮไลต์ทั้งหมด: **{count}** จุด")
+
+                            st.markdown("#### 📑 สรุปข้อความที่ถูกไฮไลต์ (แยกตามหมวดหมู่):")
+                            
+                            # แสดงผลวนลูปตามหมวดหมู่แบบ Expand/Collapse
+                            for cat_name, items in cat_results.items():
+                                # ให้ Expander เปิดอัตโนมัติถ้ามีข้อมูล
+                                with st.expander(f"📌 {cat_name} (พบ {len(items)} จุด)", expanded=(len(items) > 0)):
+                                    if len(items) == 0:
+                                        st.write("*- ไม่พบข้อความไฮไลต์ที่ตรงกับหัวข้อนี้ -*")
+                                    else:
+                                        for idx, item in enumerate(items, 1):
+                                            st.markdown(f"**{idx}. หน้า {item['page']}:** <span style='background-color: yellow; color: black; padding: 2px 6px; border-radius: 4px;'>{item['text']}</span>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # TAB 1: ตรวจสอบ JSON Schema (ปรับปรุงใหม่ล่าสุด)
@@ -409,7 +469,7 @@ with tab1:
 
                 keys_to_remove = set()
                 for k in all_keys:
-                    # [แก้ไขล่าสุด 1] กรอง "$schema" และ "title" ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
+                    #[แก้ไขล่าสุด 1] กรอง "$schema" และ "title" ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
                     if k in["$schema", "title"] or k.endswith(".$schema"):
                         keys_to_remove.add(k)
                         continue
@@ -420,14 +480,14 @@ with tab1:
                         keys_to_remove.add(k)
                         continue
                         
-                    # [แก้ไขล่าสุด 2] กรองประเภท dict (object) ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
+                    #[แก้ไขล่าสุด 2] กรองประเภท dict (object) ออก ไม่ให้นำมาแสดงและไม่คิดคะแนน
                     t1, _ = schema1.get(k, (None, None))
                     t2, _ = schema2.get(k, (None, None))
                     if t1 == "dict" or t2 == "dict":
                         keys_to_remove.add(k)
                         continue
                         
-                    # กรอง [0] ของ List Schema ออก
+                    # กรอง[0] ของ List Schema ออก
                     if k.endswith("[0]"):
                         parent_k = k[:-3]
                         if parent_k:
@@ -447,7 +507,7 @@ with tab1:
                 extra_keys_count = 0 
 
                 def is_empty_val(v):
-                    return v in [None, "", [], {}]
+                    return v in[None, "", [], {}]
 
                 def is_file_b64_key(k, v):
                     k_lower = str(k).lower()
@@ -467,7 +527,7 @@ with tab1:
                     if isinstance(val, str) and val.lower() in["null", "string", ""]: return True
                     if isinstance(val, list):
                         lower_list =[str(x).lower() for x in val]
-                        if all(x in ["string", "null"] for x in lower_list): return True
+                        if all(x in["string", "null"] for x in lower_list): return True
                     return False
                 
                 table_rows =[]
