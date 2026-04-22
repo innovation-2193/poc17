@@ -355,32 +355,32 @@ with tab3:
 # ---------------------------------------------------------
 # TAB 4: ไฮไลท์ใน PDF (แค่บอกว่ามีกี่จุด หน้าไหนบ้าง)
 # ---------------------------------------------------------
-with tab4:
-    st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF")
-    st.info("💡 ระบบจะนับจำนวนไฮไลต์ทั้งหมดและสรุปรายละเอียดตำแหน่งหน้าที่พบ")
-    
-    if not PDF_SUPPORT:
-        st.error("⚠️ ไม่พบไลบรารี PyMuPDF กรุณาติดตั้งผ่าน Terminal ด้วยคำสั่ง: `pip install pymupdf`")
-    else:
-        uploaded_file = st.file_uploader("📂 เลือกไฟล์ PDF:", type=['pdf'])
-        if uploaded_file is not None:
-            if st.button("📑 เริ่มนับจุดไฮไลต์", type="primary"):
-                with st.spinner("⏳ กำลังตรวจสอบเอกสาร..."):
-                    pdf_bytes = uploaded_file.read()
-                    count, details, error_msg = count_digital_highlights(pdf_bytes)
-                    
-                    if error_msg: 
-                        st.error(f"❌ เกิดข้อผิดพลาด: {error_msg}")
-                    else:
-                        st.divider()
-                        if count == 0: 
-                            st.info("ไม่พบจุดไฮไลต์ดิจิตอลในไฟล์นี้เลย")
-                        else:
-                            st.success(f"📊 พบการไฮไลต์ทั้งหมด: **{count}** จุด")
-
-                            st.markdown("#### 📑 รายละเอียดการค้นพบ:")
-                            for item in details:
-                                st.markdown(f"- **หน้าที่ {item['page']}** : พบ {item['count']} จุด")
+#with tab4:
+#    st.markdown("### 📁 ตรวจสอบและดึงข้อมูลไฮไลต์ในไฟล์ PDF")
+#    st.info("💡 ระบบจะนับจำนวนไฮไลต์ทั้งหมดและสรุปรายละเอียดตำแหน่งหน้าที่พบ")
+#    
+#    if not PDF_SUPPORT:
+#        st.error("⚠️ ไม่พบไลบรารี PyMuPDF กรุณาติดตั้งผ่าน Terminal ด้วยคำสั่ง: `pip install pymupdf`")
+#    else:
+#        uploaded_file = st.file_uploader("📂 เลือกไฟล์ PDF:", type=['pdf'])
+#        if uploaded_file is not None:
+#            if st.button("📑 เริ่มนับจุดไฮไลต์", type="primary"):
+#                with st.spinner("⏳ กำลังตรวจสอบเอกสาร..."):
+#                    pdf_bytes = uploaded_file.read()
+#                    count, details, error_msg = count_digital_highlights(pdf_bytes)
+#                    
+#                    if error_msg: 
+#                        st.error(f"❌ เกิดข้อผิดพลาด: {error_msg}")
+#                    else:
+#                        st.divider()
+#                        if count == 0: 
+#                            st.info("ไม่พบจุดไฮไลต์ดิจิตอลในไฟล์นี้เลย")
+#                        else:
+#                            st.success(f"📊 พบการไฮไลต์ทั้งหมด: **{count}** จุด")
+#
+#                            st.markdown("#### 📑 รายละเอียดการค้นพบ:")
+#                            for item in details:
+#                                st.markdown(f"- **หน้าที่ {item['page']}** : พบ {item['count']} จุด")
 
 # ---------------------------------------------------------
 # TAB 1: ตรวจสอบ JSON Schema
